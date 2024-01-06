@@ -1,62 +1,86 @@
-import numpy as np
-from tsp_solver.greedy import solve_tsp
+import json
+import networkx as nx
 
-def solve_knapsack(weights, values, capacity):
+def create_graph(neighbourhoods):
+    G = nx.Graph()
+
+    for neighborhood, data in neighbourhoods.items():
+        G.add_node(neighborhood, visited=False)
+
+    for i, (source, data_source) in enumerate(neighbourhoods.items()):
+        for j, (target, data_target) in enumerate(neighbourhoods.items()):
+            if i != j:
+                distance = data_source["distances"][j]
+                G.add_edge(source, target, weight=distance)
+
+    return G
+
+def solve_tsp(graph):
+    tsp_path = nx.approximation.traveling_salesman_problem(graph, cycle=True)
+    return tsp_path
+
+def solve_knapsack(locations, weights, values, capacity):
     n = len(weights)
-    dp = np.zeros((n + 1, capacity + 1))
+    dp = [[{"path": [], "value": 0, "weight": 0} for _ in range(capacity + 1)] for _ in range(n + 1)]
 
     for i in range(1, n + 1):
         for w in range(capacity + 1):
             if weights[i - 1] <= w:
-                dp[i][w] = max(dp[i - 1][w], values[i - 1] + dp[i - 1][w - weights[i - 1]])
+                include_current = {"path": dp[i - 1][w - weights[i - 1]]["path"] + [locations[i - 1]],
+                                   "value": dp[i - 1][w - weights[i - 1]]["value"] + values[i - 1],
+                                   "weight": dp[i - 1][w - weights[i - 1]]["weight"] + weights[i - 1]}
+                exclude_current = dp[i - 1][w]
+
+                if include_current["value"] > exclude_current["value"]:
+                    dp[i][w] = include_current
+                else:
+                    dp[i][w] = exclude_current
             else:
                 dp[i][w] = dp[i - 1][w]
 
-    selected_items = []
-    i, w = n, capacity
-    while i > 0 and w > 0:
-        if dp[i][w] != dp[i - 1][w]:
-            selected_items.append(i - 1)
-            w -= weights[i - 1]
-        i -= 1
-
-    return selected_items
+    return dp[n][capacity]
 
 def optimize_delivery(input_data):
-    # Convert distances to a regular Python list
-    distances = list(input_data["neighbourhoods"]["n0"]["distances"])
-    tsp_solution = solve_tsp(distances)
+    neighborhoods = input_data["neighbourhoods"]
+    graph = create_graph(neighborhoods)
+    tsp_path = solve_tsp(graph)
 
     vehicle_capacity = input_data["vehicles"]["v0"]["capacity"]
-    delivery_slots = []
+    delivery_slots = {"v0": {}}
+    path_count = 1
 
-    for location in tsp_solution:
-        order_quantities = [input_data["neighbourhoods"][f"n{location}"]["order_quantity"] for location in tsp_solution]
+    for i in range(len(tsp_path) - 1):
+        location = tsp_path[i]
+        next_location = tsp_path[i + 1]
 
-        # Assume weights and values are the same for simplicity
-        weights = order_quantities
-        values = order_quantities
+        if not graph.nodes[location]['visited']:
+            order_quantities = [neighborhoods[location]["order_quantity"]]
+            weights = order_quantities
+            values = order_quantities
 
-        knapsack_solution = solve_knapsack(weights, values, vehicle_capacity)
+            # Check if the current location has been visited in previous paths
+            for path in delivery_slots["v0"].values():
+                if location in path:
+                    break
+            else:
+                knapsack_solution = solve_knapsack([location], weights, values, vehicle_capacity)
 
-        # Add the current delivery slot
-        delivery_slots.append({
-            "location": location,
-            "orders": knapsack_solution
-        })
+                # Mark the current node as visited
+                graph.nodes[location]['visited'] = True
+
+                # Add the current delivery path to the output
+                delivery_slots["v0"]["path" + str(path_count)] = knapsack_solution["path"] + [next_location]
+                path_count += 1
 
     return delivery_slots
 
 if __name__ == "__main__":
-    # Load your input data from the JSON file
-    import json
-    input_file = 'C:\\MockHackathon 6.1.24\\Student Handout\\Input data\\level1a.json'
+    input_file = r'C:\MockHackathon 6.1.24\Student Handout\Input data\level1a.json'
     with open(input_file, 'r') as f:
         input_data = json.load(f)
 
-    # Optimize the delivery
     optimized_delivery = optimize_delivery(input_data)
 
-    # Display the optimized delivery slots
-    print(optimized_delivery)
-
+    output_file = 'lvl1aoutput.json'
+    with open(output_file, 'w') as f:
+        json.dump(optimized_delivery, f, indent=2)
